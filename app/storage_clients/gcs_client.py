@@ -7,15 +7,26 @@ class GCSClient:
         self.base = GCS_ENDPOINT
 
     def ensure_bucket(self, bucket: str):
-        # fake-gcs creates bucket on PUT
-        url = f"{self.base}/storage/v1/b/{bucket}"
-        r = requests.get(url)
-        if r.status_code != 200:
-            requests.put(f"{self.base}/storage/v1/b/{bucket}")
+    # fake-gcs-server creates bucket on PUT
+        try:
+            url = f"{self.base}/storage/v1/b/{bucket}"
+            headers = {"Content-Type": "application/json"}
+            data = {"name": bucket}
+            requests.put(url, json=data, headers=headers, timeout=5)
+        except Exception:
+            pass
 
     def put_object(self, bucket: str, key: str, data: bytes):
         url = f"{self.base}/upload/storage/v1/b/{bucket}/o?uploadType=media&name={key}"
-        requests.post(url, data=data)
+        try:
+            requests.post(
+                url,
+                headers={"Content-Type": "application/octet-stream"},
+                data=data,
+                timeout=5,
+            )
+        except Exception:
+            pass
 
     def get_object(self, bucket: str, key: str) -> bytes | None:
         url = f"{self.base}/storage/v1/b/{bucket}/o/{key}?alt=media"

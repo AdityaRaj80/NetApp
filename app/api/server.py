@@ -150,20 +150,82 @@ def ingest_event(ev: AccessEvent):
     coll_files.update_one({"id": ev.file_id}, {"$inc": {"access_freq_per_day": 1}}, upsert=True)
     return {"queued": True}
 
+from fastapi import Body
+
 @app.post("/move")
-def move(req: MoveRequest):
+def move(req: MoveRequest = Body(...)):
     if coll_files is None:
         raise HTTPException(503, "db not ready")
     f = coll_files.find_one({"id": req.file_id})
     if not f:
         raise HTTPException(404, "file not found")
-    with_retry(lambda: move_object(req.file_id, f.get("current_location","s3"), req.target))
-    coll_files.update_one({"id": req.file_id}, {"$set": {"current_location": req.target}})
-    coll_events.insert_one({"type":"move","file_id":req.file_id,"target":req.target,"ts":time.time()})
-    return {"moved": True, "to": req.target}
+
+    src = f.get("current_location", "s3")
+    try:
+        with_retry(lambda: move_object(req.file_id, src, req.target))
+        coll_files.update_one({"id": req.file_id}, {"$set": {"current_location": req.target}})
+        coll_events.insert_one({"type":"move","file_id":req.file_id,"src":src,"target":req.target,"ts":time.time()})
+        return {"moved": True, "from": src, "to": req.target}
+    except Exception as e:
+        # return the underlying error so we see exactly what's failing
+        err = f"{type(e).__name__}: {e}"
+        coll_events.insert_one({"type":"move_error","file_id":req.file_id,"src":src,"target":req.target,"error":err,"ts":time.time()})
+        raise HTTPException(500, f"move failed {src}->{req.target}: {err}")
 
 @app.post("/seed")
 def seed():
     if coll_files is None:
         raise HTTPException(503, "db not ready")
     return seed_from_disk()
+
+import hashlib
+def _sha(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()[:16]
+
+@app.post("/storage_test")
+def storage_test():
+    results = {}
+    payload = b"diag-" + str(time.time()).encode()
+
+    # S3
+    try:
+        from storage_clients.s3_client import S3Client
+        from orchestrator.mover import S3_BUCKET
+        s3 = S3Client()
+        key = "diag_s3.txt"
+        s3.put_object(S3_BUCKET, key, payload)
+        rb = s3.get_object(S3_BUCKET, key)
+        results["s3"] = {"ok": rb == payload, "sha": _sha(rb or b""), "bucket": S3_BUCKET}
+        s3.delete_object(S3_BUCKET, key)
+    except Exception as e:
+        results["s3"] = {"ok": False, "error": str(e)}
+
+    # Azure
+    try:
+        from storage_clients.azure_client import AzureClient
+        az = AzureClient()
+        cont = "netapp-blob"
+        key = "diag_az.txt"
+        az.ensure_container(cont)
+        az.put_blob(cont, key, payload)
+        rb = az.get_blob(cont, key)
+        results["azure"] = {"ok": rb == payload, "sha": _sha(rb or b""), "container": cont}
+        az.delete_blob(cont, key)
+    except Exception as e:
+        results["azure"] = {"ok": False, "error": str(e)}
+
+    # GCS
+    try:
+        from storage_clients.gcs_client import GCSClient
+        from orchestrator.mover import GCS_BUCKET
+        gcs = GCSClient()
+        key = "diag_gcs.txt"
+        gcs.ensure_bucket(GCS_BUCKET)
+        gcs.put_object(GCS_BUCKET, key, payload)
+        rb = gcs.get_object(GCS_BUCKET, key)
+        results["gcs"] = {"ok": rb == payload, "sha": _sha(rb or b""), "bucket": GCS_BUCKET}
+        gcs.delete_object(GCS_BUCKET, key)
+    except Exception as e:
+        results["gcs"] = {"ok": False, "error": str(e)}
+
+    return results

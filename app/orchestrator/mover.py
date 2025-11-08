@@ -12,9 +12,22 @@ az = AzureClient()
 gcs = GCSClient()
 
 def ensure_buckets():
-    s3.ensure_bucket(S3_BUCKET)
-    az.ensure_container("netapp-blob")
-    gcs.ensure_bucket(GCS_BUCKET)
+    # S3 is required for seeds
+    try:
+        s3.ensure_bucket(S3_BUCKET)
+    except Exception:
+        pass
+
+    # Best-effort for others; don't crash on failures
+    try:
+        az.ensure_container("netapp-blob")
+    except Exception:
+        pass
+    try:
+        gcs.ensure_bucket(GCS_BUCKET)
+    except Exception:
+        pass
+
 
 def put_seed_objects(seed_dir: str):
     p = Path(seed_dir)
