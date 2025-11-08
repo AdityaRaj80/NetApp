@@ -26,6 +26,14 @@ DEVICE_COUNTS: Dict[str, int] = defaultdict(int)
 ANOMALY_COUNT_LAST_60 = deque(maxlen=60)  # store last 60 minutes anomaly counts
 CUR_MIN_BUCKET = int(time.time() // 60)
 CUR_MIN_COUNT = 0
+HOT_TEMP = float(os.getenv("HOT_TEMP", "80"))
+WARM_TEMP = float(os.getenv("WARM_TEMP", "60"))
+IDLE_COLD_MINUTES = int(os.getenv("IDLE_COLD_MINUTES", "10"))
+
+DEVICE_LAST_SEEN: Dict[str, int] = defaultdict(int)     # device_id -> last minute bucket
+DEVICE_TIER: Dict[str, str] = defaultdict(lambda: "cold")
+# per-minute tier counts: {minute_bucket: {"hot": n, "warm": n, "cold": n}}
+TIERS_PER_MIN: Dict[int, Dict[str, int]] = defaultdict(lambda: {"hot": 0, "warm": 0, "cold": 0})
 
 an = OnlineAnomaly(window=400)
 
@@ -95,18 +103,63 @@ async def stream_event(ev: StreamEvent):
     CUR_MIN_COUNT += 1
     DEVICE_COUNTS[payload["device_id"]] += 1
 
-    # If consumer didn’t enrich (safety), run minimal scoring here
+    # Minimal scoring fallback (as before)
     if payload.get("z_temp") is None:
         score = an.score_event(payload)
         payload.update(score)
 
-    RECENT_EVENTS.append(payload)
+    # === Tiering logic ===
+    dev = payload["device_id"]
+    temp = float(payload.get("temperature", 0.0))
+    prev_seen = DEVICE_LAST_SEEN.get(dev, minute_bucket)
+    new_tier = _compute_tier(temp, prev_seen, minute_bucket)
+    old_tier = DEVICE_TIER.get(dev, "cold")
+    DEVICE_TIER[dev] = new_tier
+    DEVICE_LAST_SEEN[dev] = minute_bucket
 
-    # Triggers
+    # bump per-minute tier counts
+    TIERS_PER_MIN[minute_bucket][new_tier] += 1
+
+    # Keep existing triggers
+    RECENT_EVENTS.append(payload)
     if payload.get("is_temp_alert"):
         ACTIONS.append({"ts": time.time(), "type": "raise_alert", "event": payload})
-    action = policy_tiering(DEVICE_COUNTS, payload["device_id"])
+    action = policy_tiering(DEVICE_COUNTS, dev)
     if action:
         ACTIONS.append({"ts": time.time(), "type": action, "event": payload})
 
     return {"ok": True}
+
+def _compute_tier(temp: float, last_seen_min: int, now_min: int) -> str:
+    # Idle devices drift to cold after IDLE_COLD_MINUTES with no data
+    idle = (now_min - last_seen_min) if last_seen_min else 0
+    if idle >= IDLE_COLD_MINUTES:
+        return "cold"
+    if temp >= HOT_TEMP:
+        return "hot"
+    if temp >= WARM_TEMP:
+        return "warm"
+    return "cold"
+
+@app.get("/tiers")
+def tiers_snapshot():
+    # current bucket counts (computed from DEVICE_TIER live map)
+    hot = sum(1 for t in DEVICE_TIER.values() if t == "hot")
+    warm = sum(1 for t in DEVICE_TIER.values() if t == "warm")
+    cold = sum(1 for t in DEVICE_TIER.values() if t == "cold")
+    return {"hot": hot, "warm": warm, "cold": cold, "devices": len(DEVICE_TIER)}
+
+@app.get("/tiers/series")
+def tiers_series():
+    # last 30 minutes including live minute
+    series = []
+    keys = sorted(TIERS_PER_MIN.keys())
+    last30 = keys[-30:] if keys else []
+    for k in last30:
+        series.append({"minute": k, **TIERS_PER_MIN[k]})
+    # include live minute even if no entry yet
+    if not series or series[-1]["minute"] != CUR_MIN_BUCKET:
+        # ensure we show the current counts; these are "events classified this minute"
+        live = TIERS_PER_MIN[CUR_MIN_BUCKET]
+        series.append({"minute": CUR_MIN_BUCKET, **live})
+    return series

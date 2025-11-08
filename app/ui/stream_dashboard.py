@@ -35,7 +35,7 @@ API = _discover_api()
 st.title("📊 NetApp Data-in-Motion — Live Ops")
 
 
-tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Kafka", "ML Insights", "Actions"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Kafka", "ML Insights", "Actions", "Buckets"])
 
 @st.cache_data(ttl=2.0)
 def fetch_health():
@@ -56,6 +56,17 @@ def fetch_peek(n=100):
 def fetch_actions(n=100):
     r = requests.get(f"{API}/actions?n={n}", timeout=3); r.raise_for_status()
     return r.json()
+    
+@st.cache_data(ttl=1.0)
+def fetch_tiers():
+    r = requests.get(f"{API}/tiers", timeout=3); r.raise_for_status()
+    return r.json()
+
+@st.cache_data(ttl=1.0)
+def fetch_tiers_series():
+    r = requests.get(f"{API}/tiers/series", timeout=3); r.raise_for_status()
+    return r.json()
+
 
 with tab1:
     h = fetch_health()
@@ -110,6 +121,40 @@ with tab4:
     else:
         st.info("No actions yet.")
     # 🔄 Force page to reload at interval
+
+with tab5:
+    st.subheader("Tier Buckets — Hot / Warm / Cold")
+
+    snap = fetch_tiers()
+    scols = st.columns(4)
+    scols[0].metric("Devices (total)", snap.get("devices", 0))
+    scols[1].metric("Hot", snap.get("hot", 0))
+    scols[2].metric("Warm", snap.get("warm", 0))
+    scols[3].metric("Cold", snap.get("cold", 0))
+
+    # Donut snapshot
+    s_df = pd.DataFrame(
+        [{"tier":"hot","count":snap.get("hot",0)},
+         {"tier":"warm","count":snap.get("warm",0)},
+         {"tier":"cold","count":snap.get("cold",0)}]
+    )
+    figd = px.pie(s_df, values="count", names="tier", hole=0.5, title="Current Tier Snapshot")
+    st.plotly_chart(figd, use_container_width=True)
+
+    # Stacked per-minute series
+    ts = fetch_tiers_series()
+    if ts:
+        tdf = pd.DataFrame(ts).sort_values("minute")
+        tdf["minute"] = tdf["minute"].astype(int)
+        figstack = px.bar(
+            tdf, x="minute",
+            y=["hot","warm","cold"],
+            title="Tier counts per minute (stacked)",
+            barmode="stack"
+        )
+        st.plotly_chart(figstack, use_container_width=True)
+    else:
+        st.info("No tier data yet — wait for a few events to arrive.")
 
 import time as _t
 if auto_refresh:
