@@ -5,15 +5,27 @@ from typing import Dict, Any, List
 from datetime import datetime
 import requests, os
 
-app = FastAPI(title='NetApp Stream API', version='1.1')
+# NEW: Mongo
+from pymongo import MongoClient
 
+app = FastAPI(title='NetApp Stream API', version='1.2')
+
+# In-memory
 events: List[Dict[str, Any]] = []
 hotness = defaultdict(int)
 actions_q = deque(maxlen=200)
 
+# Thresholds
 HOT_THRESHOLD = int(os.getenv("HOT_THRESHOLD", "20"))
 TEMP_ALERT   = float(os.getenv("TEMP_ALERT", "80.0"))
-ORCH_URL = os.getenv("ORCH_URL")
+ORCH_URL     = os.getenv("ORCH_URL")
+
+# Mongo wiring
+MONGO_URL    = os.getenv("MONGO_URL", "mongodb://infra-mongo-1:27017/")
+MONGO_DB     = os.getenv("MONGO_DB", "netapp_stream")
+MONGO_COL    = os.getenv("MONGO_COL", "events")
+mongo = MongoClient(MONGO_URL)
+col  = mongo[MONGO_DB][MONGO_COL]
 
 class StreamEvent(BaseModel):
     event_id: int
@@ -21,7 +33,7 @@ class StreamEvent(BaseModel):
     temperature: float
     bytes: int
     timestamp: float
-    anomaly: bool | None = None
+    anomaly: bool | None = None  # optional (set by consumer)
 
 def migrate_to_hot_tier(device_id: int):
     payload = {"device_id": device_id, "policy": "tier_to_hot", "source": "stream_api"}
@@ -49,8 +61,11 @@ def actions(n: int = 20):
 @app.post('/stream/event')
 def stream_event(e: StreamEvent):
     obj = e.model_dump()
+    # In-memory
     events.append(obj)
     hotness[e.device_id] += 1
+    # Persist (idempotent enough for demo)
+    col.insert_one({**obj, "ingested_at": datetime.utcnow()})
 
     local = []
     if hotness[e.device_id] >= HOT_THRESHOLD:

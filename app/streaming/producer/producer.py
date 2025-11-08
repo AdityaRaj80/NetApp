@@ -1,22 +1,24 @@
-﻿from kafka import KafkaProducer
-import json, time, random, os
+﻿from __future__ import annotations
+import os, json, random, time
+from kafka import KafkaProducer
+
 BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
-TOPIC = os.getenv("KAFKA_TOPIC", "sensor_stream")
-DELAY = float(os.getenv("EVENT_DELAY_SECONDS", "1.0"))
-producer = KafkaProducer(bootstrap_servers=[BOOTSTRAP],
-                         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                         linger_ms=50)
-print(f"[producer] -> {BOOTSTRAP} topic={TOPIC}")
-i = 0
-while True:
-    i += 1
-    evt = {
-        "event_id": i,
-        "device_id": random.randint(1, 8),
-        "temperature": round(random.uniform(20, 95), 2),
-        "bytes": random.randint(10_000, 5_000_000),
-        "timestamp": time.time(),
-    }
-    producer.send(TOPIC, value=evt)
-    print("[producer] sent:", evt)
-    time.sleep(DELAY)
+TOPIC     = os.getenv("KAFKA_TOPIC", "sensor_stream")
+
+def main():
+    p = KafkaProducer(bootstrap_servers=BOOTSTRAP,
+                      value_serializer=lambda x: json.dumps(x).encode("utf-8"))
+    devices = [f"dev-{i:03d}" for i in range(1, 26)]
+    print(f"[producer] sending to {BOOTSTRAP} topic={TOPIC}")
+    while True:
+        ev = {
+            "device_id": random.choice(devices),
+            "temperature": round(random.gauss(65, 8), 2),  # mean 65C, sd 8
+            "bytes": random.randint(500, 50_000),
+            "ts": time.time(),
+        }
+        p.send(TOPIC, ev)
+        print("[producer] sent:", ev)
+        time.sleep(0.35)  # ~170 ev/min
+if __name__ == "__main__":
+    main()
