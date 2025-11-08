@@ -11,6 +11,8 @@
     environment:
       HOT_THRESHOLD: "20"
       TEMP_ALERT: "80.0"
+    networks:
+      - kafka_net
 
   stream-consumer:
     image: python:3.11-slim
@@ -20,12 +22,14 @@
       - ../app/streaming/consumer:/app/consumer:ro
     command: bash -lc "pip install --no-cache-dir kafka-python requests && python consumer/consumer.py"
     environment:
-      KAFKA_BOOTSTRAP: "host.docker.internal:19092"
+      KAFKA_BOOTSTRAP: "netapp-kafka:29092"     # INTERNAL listener
       KAFKA_TOPIC: "sensor_stream"
       STREAM_API: "http://stream-api:8001/stream/event"
       Z_THRESH: "2.5"
     depends_on:
       - stream-api
+    networks:
+      - kafka_net
 
   stream-producer:
     image: python:3.11-slim
@@ -35,11 +39,13 @@
       - ../app/streaming/producer:/app/producer:ro
     command: bash -lc "pip install --no-cache-dir kafka-python && python producer/producer.py"
     environment:
-      KAFKA_BOOTSTRAP: "host.docker.internal:19092"
+      KAFKA_BOOTSTRAP: "netapp-kafka:29092"     # INTERNAL listener
       KAFKA_TOPIC: "sensor_stream"
       EVENT_DELAY_SECONDS: "1.0"
     depends_on:
       - stream-api
+    networks:
+      - kafka_net
 
   stream-ui:
     image: python:3.11-slim
@@ -53,3 +59,10 @@
     environment:
       STREAM_API_HOST: "stream-api"
       STREAM_API_PORT: "8001"
+    networks:
+      - kafka_net
+
+networks:
+  kafka_net:
+    external: true
+    name: kafka_default
