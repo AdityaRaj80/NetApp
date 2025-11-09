@@ -16,7 +16,7 @@ TIER_TO_LOCATION = {"hot": "azure", "warm": "s3", "cold": "gcs"}
 
 
 st.set_page_config(page_title="NetApp Data-in-Motion", layout="wide")
-st.title("📊 NetApp Data-in-Motion — Mission Control")
+st.title("📊 Moving Data")
 
 
 @st.cache_data(ttl=5.0)
@@ -37,16 +37,6 @@ def fetch_health() -> Dict[str, object]:
     if isinstance(data, dict):
         return data
     return {"status": "unknown"}
-
-
-@st.cache_data(ttl=15.0)
-def fetch_policy(file_id: str) -> Dict[str, object]:
-    response = requests.get(f"{API}/policy/{file_id}", timeout=5)
-    response.raise_for_status()
-    payload = response.json()
-    if isinstance(payload, dict):
-        return payload
-    return {"file_id": file_id, "recommendation": "unknown", "source": "n/a", "features": {}}
 
 
 @st.cache_data(ttl=5.0)
@@ -117,7 +107,6 @@ def fetch_stream_metrics(limit: int = 240) -> Dict[str, object]:
 def refresh_all_caches() -> None:
     fetch_files_payload.clear()
     fetch_health.clear()
-    fetch_policy.clear()
 
 
 def safe_float(value: object) -> float:
@@ -337,36 +326,60 @@ with st.container(border=True):
             if isinstance(record, dict)
         )
 
-        metrics_row = st.columns(6)
-        metrics_row[0].metric("Datasets", total_datasets)
-        metrics_row[1].metric("Tier mix", f"🔥 {hot} · 🌤️ {warm} · 🧊 {cold}")
-        metrics_row[2].metric("Storage footprint", f"{storage_total:.2f} GB")
-        metrics_row[3].metric("Cost (est/month)", f"₹{est_cost:,.2f}")
-        metrics_row[4].metric("Active devices", active_streams)
-        metrics_row[5].metric("Kafka throughput", f"{kafka_throughput:.1f} msg/min")
+        overview_cols = st.columns([3, 2])
 
-        meta_row = st.columns(2)
-        with meta_row[0]:
+        with overview_cols[0]:
+            st.markdown("### Operations snapshot")
+            core_metrics = st.columns(3)
+            core_metrics[0].metric("Datasets", total_datasets)
+            core_metrics[1].metric("Storage footprint", f"{storage_total:.2f} GB")
+            core_metrics[2].metric("Cost (est/month)", f"₹{est_cost:,.2f}")
+
+            activity_metrics = st.columns(3)
+            activity_metrics[0].metric("Active devices", active_streams)
+            activity_metrics[1].metric("Kafka throughput", f"{kafka_throughput:.1f} msg/min")
+            activity_metrics[2].metric("Recent migrations", migrations_today)
+
+            share_denominator = total_datasets if total_datasets else 1
+            tier_metrics = st.columns(3)
+            tier_metrics[0].metric(
+                "🔥 Hot datasets",
+                hot,
+                delta=f"{hot / share_denominator * 100:.1f}% of catalog",
+            )
+            tier_metrics[1].metric(
+                "🌤️ Warm datasets",
+                warm,
+                delta=f"{warm / share_denominator * 100:.1f}% of catalog",
+            )
+            tier_metrics[2].metric(
+                "🧊 Cold datasets",
+                cold,
+                delta=f"{cold / share_denominator * 100:.1f}% of catalog",
+            )
+
+        with overview_cols[1]:
+            st.markdown("### Platform status")
             render_health_status()
-        with meta_row[1]:
-            st.markdown("**Ongoing migrations (24h)**")
-            st.metric("Recent moves", migrations_today)
+            st.markdown("**Alerts & policies**")
             signal_cols = st.columns(2)
             signal_cols[0].metric("Active alerts", total_alerts)
             signal_cols[1].metric("Policy triggers", total_policy_triggers)
-            st.caption(f"Stream events seen: {int(stream_metrics.get('total_events', 0))}")
-        st.caption("Tier defaults: Azure = HOT, S3 = WARM, GCS = COLD. Confidence ≥95% triggers eligible bulk moves.")
+            st.metric("Stream events (lifetime)", int(stream_metrics.get("total_events", 0)))
+
+        st.caption(
+            "Tier defaults: Azure = HOT, S3 = WARM, GCS = COLD. Confidence ≥95% triggers eligible bulk moves."
+        )
 
 
 # ---------------------------------------------------------------------------
 # Tabs for detailed exploration
 # ---------------------------------------------------------------------------
-overview_tab, datasets_tab, streaming_tab, ml_tab, migrations_tab = st.tabs(
+overview_tab, datasets_tab, streaming_tab, migrations_tab = st.tabs(
     [
         "📦 Storage Snapshot",
         "📚 Datasets",
         "📡 Streaming",
-        "🧠 ML Insights",
         "🚚 Migrations & Alerts",
     ]
 )
@@ -384,14 +397,6 @@ with overview_tab:
             datasets=("id", "count"),
         )
         st.dataframe(grouped, use_container_width=True)
-
-        region_group = df.groupby("cloud_region").agg(
-            storage_gb=("size_kb", lambda s: float(s.fillna(0).sum()) / SIZE_KB_PER_GB),
-            egress_last_hr=("egress_cost_last_1hr", "sum"),
-            datasets=("id", "count"),
-        )
-        st.markdown("**Storage by region**")
-        st.dataframe(region_group, use_container_width=True)
 
 
 with datasets_tab:
@@ -684,67 +689,6 @@ with streaming_tab:
                 inplace=True,
             )
             st.dataframe(feed_df.sort_values("req/min", ascending=False), use_container_width=True, hide_index=True)
-
-
-with ml_tab:
-    st.subheader("Predictive Recommendations")
-    if df.empty:
-        st.info("Metadata not available. Train the predictive model once data lands.")
-    else:
-        policy_rows: List[Dict[str, object]] = []
-        for dataset_id in df["id"].tolist():
-            try:
-                policy_rows.append(fetch_policy(dataset_id))
-            except Exception as exc:
-                policy_rows.append({"file_id": dataset_id, "recommendation": "error", "error": str(exc)})
-
-        policy_df = pd.DataFrame(policy_rows)
-        st.markdown("**Current model outputs**")
-        if not policy_df.empty:
-            display_cols = ["file_id", "recommendation", "source"]
-            if "confidence" in policy_df.columns:
-                policy_df["confidence_pct"] = policy_df["confidence"].map(lambda v: f"{float(v)*100:.1f}%" if v is not None else "–")
-                display_cols.append("confidence_pct")
-            if "model_type" in policy_df.columns:
-                display_cols.append("model_type")
-            st.dataframe(policy_df[display_cols], use_container_width=True, hide_index=True)
-
-        st.markdown("**Feature intensity (per-tier averages)**")
-        feature_cols = [
-            "req_count_last_10min",
-            "ema_req_30min",
-            "bytes_read_last_10min",
-            "p95_latency_5min",
-            "hour_of_day",
-        ]
-        feature_df = df[["current_tier", *feature_cols]].copy()
-        feature_summary = feature_df.groupby("current_tier").mean(numeric_only=True)
-        st.bar_chart(feature_summary.transpose())
-
-        st.markdown("**What-if analyzer**")
-        with st.expander("Simulate demand spike"):
-            scenario_dataset = st.selectbox("Dataset", options=df["id"].tolist(), key="scenario-dataset")
-            scenario_row = df[df["id"] == scenario_dataset].iloc[0]
-            base_freq = float(scenario_row.get("access_freq_per_day", 0.0))
-            base_latency = float(scenario_row.get("latency_sla_ms", 0.0))
-            freq_multiplier = st.slider("Frequency multiplier", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
-            latency_delta = st.slider("Latency change (ms)", min_value=-200, max_value=200, value=0, step=10)
-
-            projected_freq = base_freq * freq_multiplier
-            projected_latency = max(base_latency + latency_delta, 1.0)
-
-            # Simple heuristic fallback mirroring decide_tier
-            if projected_freq >= 100 or projected_latency <= 25:
-                projected_tier = "hot"
-            elif projected_freq >= 10 or projected_latency <= 120:
-                projected_tier = "warm"
-            else:
-                projected_tier = "cold"
-
-            st.metric("Projected tier", f"{projected_tier.upper()}")
-            st.caption("Predictions fall back to heuristic thresholds when the ML model is not trained.")
-
-
 with migrations_tab:
     st.subheader("Migration Activity & Alerts")
     if df.empty:
