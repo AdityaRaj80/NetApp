@@ -83,12 +83,12 @@ The project was originally produced for the NetApp **Data-in-Motion** hackathon 
 ## Repository Layout
 | Path | Purpose |
 | ---- | ------- |
-| `README.md` | You are here – comprehensive documentation for the project. |
-| `hackathon-main/NetApp-main/app/` | Python sources for the API, orchestrator, streaming utilities, and Streamlit dashboards. |
-| `hackathon-main/NetApp-main/infra/` | Docker Compose definitions and container assets for local deployment. |
-| `hackathon-main/NetApp-main/data/` | Seed files and simulated blob storage directories used during demos. |
-| `hackathon-main/NetApp-main/ui/` | Stream-specific dashboards used by the optional streaming sandbox. |
-| `hackathon-main/NetApp-main/README_NetApp_Data_in_Motion.md` | Original hackathon write-up with high-level talking points. |
+| ⁠ README.md ⁠ | You are here – comprehensive documentation for the project. |
+| ⁠ finalhack/app/ ⁠ | Python sources for the API, orchestrator, streaming utilities, and Streamlit dashboards. |
+| ⁠ finalhack/infra/ ⁠ | Docker Compose definitions and container assets for local deployment. |
+| ⁠ finalhack/data/ ⁠ | Seed files and simulated blob storage directories used during demos. |
+| ⁠ finalhack/ui/ ⁠ | Stream-specific dashboards used by the optional streaming sandbox. |
+| ⁠ finalhack/readme.md ⁠ | Original hackathon write-up with high-level talking points. |
 
 ---
 
