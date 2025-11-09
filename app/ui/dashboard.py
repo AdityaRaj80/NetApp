@@ -337,20 +337,30 @@ with st.container(border=True):
             if isinstance(record, dict)
         )
 
-        metrics_row = st.columns(6)
-        metrics_row[0].metric("Datasets", total_datasets)
-        metrics_row[1].metric("Tier mix", f"🔥 {hot} · 🌤️ {warm} · 🧊 {cold}")
-        metrics_row[2].metric("Storage footprint", f"{storage_total:.2f} GB")
-        metrics_row[3].metric("Cost (est/month)", f"₹{est_cost:,.2f}")
-        metrics_row[4].metric("Active devices", active_streams)
-        metrics_row[5].metric("Kafka throughput", f"{kafka_throughput:.1f} msg/min")
+        summary_cols = st.columns(4)
+        summary_cols[0].metric("Datasets", total_datasets)
+        summary_cols[1].metric("Storage footprint", f"{storage_total:.2f} GB")
+        summary_cols[2].metric("Active devices", active_streams)
+        summary_cols[3].metric("Kafka throughput", f"{kafka_throughput:.1f} msg/min")
+
+        share_denominator = total_datasets if total_datasets else 1
+        tier_cols = st.columns(3)
+        tier_cols[0].metric("🔥 Hot datasets", hot)
+        tier_cols[0].caption(f"{hot / share_denominator * 100:.1f}% of catalog")
+        tier_cols[1].metric("🌤️ Warm datasets", warm)
+        tier_cols[1].caption(f"{warm / share_denominator * 100:.1f}% of catalog")
+        tier_cols[2].metric("🧊 Cold datasets", cold)
+        tier_cols[2].caption(f"{cold / share_denominator * 100:.1f}% of catalog")
+
+        cost_cols = st.columns(2)
+        cost_cols[0].metric("Cost (est/month)", f"₹{est_cost:,.2f}")
+        cost_cols[1].metric("Recent migrations", migrations_today)
 
         meta_row = st.columns(2)
         with meta_row[0]:
             render_health_status()
         with meta_row[1]:
-            st.markdown("**Ongoing migrations (24h)**")
-            st.metric("Recent moves", migrations_today)
+            st.markdown("**Alerts & policies**")
             signal_cols = st.columns(2)
             signal_cols[0].metric("Active alerts", total_alerts)
             signal_cols[1].metric("Policy triggers", total_policy_triggers)
@@ -384,14 +394,6 @@ with overview_tab:
             datasets=("id", "count"),
         )
         st.dataframe(grouped, use_container_width=True)
-
-        region_group = df.groupby("cloud_region").agg(
-            storage_gb=("size_kb", lambda s: float(s.fillna(0).sum()) / SIZE_KB_PER_GB),
-            egress_last_hr=("egress_cost_last_1hr", "sum"),
-            datasets=("id", "count"),
-        )
-        st.markdown("**Storage by region**")
-        st.dataframe(region_group, use_container_width=True)
 
 
 with datasets_tab:
