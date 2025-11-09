@@ -337,35 +337,50 @@ with st.container(border=True):
             if isinstance(record, dict)
         )
 
-        summary_cols = st.columns(4)
-        summary_cols[0].metric("Datasets", total_datasets)
-        summary_cols[1].metric("Storage footprint", f"{storage_total:.2f} GB")
-        summary_cols[2].metric("Active devices", active_streams)
-        summary_cols[3].metric("Kafka throughput", f"{kafka_throughput:.1f} msg/min")
+        overview_cols = st.columns([3, 2])
 
-        share_denominator = total_datasets if total_datasets else 1
-        tier_cols = st.columns(3)
-        tier_cols[0].metric("🔥 Hot datasets", hot)
-        tier_cols[0].caption(f"{hot / share_denominator * 100:.1f}% of catalog")
-        tier_cols[1].metric("🌤️ Warm datasets", warm)
-        tier_cols[1].caption(f"{warm / share_denominator * 100:.1f}% of catalog")
-        tier_cols[2].metric("🧊 Cold datasets", cold)
-        tier_cols[2].caption(f"{cold / share_denominator * 100:.1f}% of catalog")
+        with overview_cols[0]:
+            st.markdown("### Operations snapshot")
+            core_metrics = st.columns(3)
+            core_metrics[0].metric("Datasets", total_datasets)
+            core_metrics[1].metric("Storage footprint", f"{storage_total:.2f} GB")
+            core_metrics[2].metric("Cost (est/month)", f"₹{est_cost:,.2f}")
 
-        cost_cols = st.columns(2)
-        cost_cols[0].metric("Cost (est/month)", f"₹{est_cost:,.2f}")
-        cost_cols[1].metric("Recent migrations", migrations_today)
+            activity_metrics = st.columns(3)
+            activity_metrics[0].metric("Active devices", active_streams)
+            activity_metrics[1].metric("Kafka throughput", f"{kafka_throughput:.1f} msg/min")
+            activity_metrics[2].metric("Recent migrations", migrations_today)
 
-        meta_row = st.columns(2)
-        with meta_row[0]:
+            share_denominator = total_datasets if total_datasets else 1
+            tier_metrics = st.columns(3)
+            tier_metrics[0].metric(
+                "🔥 Hot datasets",
+                hot,
+                delta=f"{hot / share_denominator * 100:.1f}% of catalog",
+            )
+            tier_metrics[1].metric(
+                "🌤️ Warm datasets",
+                warm,
+                delta=f"{warm / share_denominator * 100:.1f}% of catalog",
+            )
+            tier_metrics[2].metric(
+                "🧊 Cold datasets",
+                cold,
+                delta=f"{cold / share_denominator * 100:.1f}% of catalog",
+            )
+
+        with overview_cols[1]:
+            st.markdown("### Platform status")
             render_health_status()
-        with meta_row[1]:
             st.markdown("**Alerts & policies**")
             signal_cols = st.columns(2)
             signal_cols[0].metric("Active alerts", total_alerts)
             signal_cols[1].metric("Policy triggers", total_policy_triggers)
-            st.caption(f"Stream events seen: {int(stream_metrics.get('total_events', 0))}")
-        st.caption("Tier defaults: Azure = HOT, S3 = WARM, GCS = COLD. Confidence ≥95% triggers eligible bulk moves.")
+            st.metric("Stream events (lifetime)", int(stream_metrics.get("total_events", 0)))
+
+        st.caption(
+            "Tier defaults: Azure = HOT, S3 = WARM, GCS = COLD. Confidence ≥95% triggers eligible bulk moves."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -704,9 +719,6 @@ with ml_tab:
         st.markdown("**Current model outputs**")
         if not policy_df.empty:
             display_cols = ["file_id", "recommendation", "source"]
-            if "confidence" in policy_df.columns:
-                policy_df["confidence_pct"] = policy_df["confidence"].map(lambda v: f"{float(v)*100:.1f}%" if v is not None else "–")
-                display_cols.append("confidence_pct")
             if "model_type" in policy_df.columns:
                 display_cols.append("model_type")
             st.dataframe(policy_df[display_cols], use_container_width=True, hide_index=True)
