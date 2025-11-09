@@ -16,7 +16,7 @@ TIER_TO_LOCATION = {"hot": "azure", "warm": "s3", "cold": "gcs"}
 
 
 st.set_page_config(page_title="NetApp Data-in-Motion", layout="wide")
-st.title("📊 NetApp Data-in-Motion — Mission Control")
+st.title("📊 Moving Data")
 
 
 @st.cache_data(ttl=5.0)
@@ -37,16 +37,6 @@ def fetch_health() -> Dict[str, object]:
     if isinstance(data, dict):
         return data
     return {"status": "unknown"}
-
-
-@st.cache_data(ttl=15.0)
-def fetch_policy(file_id: str) -> Dict[str, object]:
-    response = requests.get(f"{API}/policy/{file_id}", timeout=5)
-    response.raise_for_status()
-    payload = response.json()
-    if isinstance(payload, dict):
-        return payload
-    return {"file_id": file_id, "recommendation": "unknown", "source": "n/a", "features": {}}
 
 
 @st.cache_data(ttl=5.0)
@@ -117,7 +107,6 @@ def fetch_stream_metrics(limit: int = 240) -> Dict[str, object]:
 def refresh_all_caches() -> None:
     fetch_files_payload.clear()
     fetch_health.clear()
-    fetch_policy.clear()
 
 
 def safe_float(value: object) -> float:
@@ -386,12 +375,11 @@ with st.container(border=True):
 # ---------------------------------------------------------------------------
 # Tabs for detailed exploration
 # ---------------------------------------------------------------------------
-overview_tab, datasets_tab, streaming_tab, ml_tab, migrations_tab = st.tabs(
+overview_tab, datasets_tab, streaming_tab, migrations_tab = st.tabs(
     [
         "📦 Storage Snapshot",
         "📚 Datasets",
         "📡 Streaming",
-        "🧠 ML Insights",
         "🚚 Migrations & Alerts",
     ]
 )
@@ -701,64 +689,6 @@ with streaming_tab:
                 inplace=True,
             )
             st.dataframe(feed_df.sort_values("req/min", ascending=False), use_container_width=True, hide_index=True)
-
-
-with ml_tab:
-    st.subheader("Predictive Recommendations")
-    if df.empty:
-        st.info("Metadata not available. Train the predictive model once data lands.")
-    else:
-        policy_rows: List[Dict[str, object]] = []
-        for dataset_id in df["id"].tolist():
-            try:
-                policy_rows.append(fetch_policy(dataset_id))
-            except Exception as exc:
-                policy_rows.append({"file_id": dataset_id, "recommendation": "error", "error": str(exc)})
-
-        policy_df = pd.DataFrame(policy_rows)
-        st.markdown("**Current model outputs**")
-        if not policy_df.empty:
-            display_cols = ["file_id", "recommendation", "source"]
-            if "model_type" in policy_df.columns:
-                display_cols.append("model_type")
-            st.dataframe(policy_df[display_cols], use_container_width=True, hide_index=True)
-
-        st.markdown("**Feature intensity (per-tier averages)**")
-        feature_cols = [
-            "req_count_last_10min",
-            "ema_req_30min",
-            "bytes_read_last_10min",
-            "p95_latency_5min",
-            "hour_of_day",
-        ]
-        feature_df = df[["current_tier", *feature_cols]].copy()
-        feature_summary = feature_df.groupby("current_tier").mean(numeric_only=True)
-        st.bar_chart(feature_summary.transpose())
-
-        st.markdown("**What-if analyzer**")
-        with st.expander("Simulate demand spike"):
-            scenario_dataset = st.selectbox("Dataset", options=df["id"].tolist(), key="scenario-dataset")
-            scenario_row = df[df["id"] == scenario_dataset].iloc[0]
-            base_freq = float(scenario_row.get("access_freq_per_day", 0.0))
-            base_latency = float(scenario_row.get("latency_sla_ms", 0.0))
-            freq_multiplier = st.slider("Frequency multiplier", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
-            latency_delta = st.slider("Latency change (ms)", min_value=-200, max_value=200, value=0, step=10)
-
-            projected_freq = base_freq * freq_multiplier
-            projected_latency = max(base_latency + latency_delta, 1.0)
-
-            # Simple heuristic fallback mirroring decide_tier
-            if projected_freq >= 100 or projected_latency <= 25:
-                projected_tier = "hot"
-            elif projected_freq >= 10 or projected_latency <= 120:
-                projected_tier = "warm"
-            else:
-                projected_tier = "cold"
-
-            st.metric("Projected tier", f"{projected_tier.upper()}")
-            st.caption("Predictions fall back to heuristic thresholds when the ML model is not trained.")
-
-
 with migrations_tab:
     st.subheader("Migration Activity & Alerts")
     if df.empty:
