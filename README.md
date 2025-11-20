@@ -132,7 +132,7 @@ The project was originally produced for the NetApp **Data-in-Motion** hackathon 
 ### Full stack with Docker Compose
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/MannasMShah/finalhack.git
+   git clone https://github.com/AdityaRaj80/NetApp.git
    cd finalhack/infra
    ```
 2. **Boot all services**
